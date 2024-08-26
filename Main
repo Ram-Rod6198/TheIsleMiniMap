@@ -5,6 +5,35 @@ import re
 import tkinter as tk
 from tkinter import Label, Button, Checkbutton, BooleanVar
 import keyboard
+import requests
+from io import BytesIO
+import os
+import re
+import tkinter as tk
+from screeninfo import get_monitors
+
+def get_resolution():
+    monitors = get_monitors()
+    if monitors:
+        width = monitors[0].width
+        height = monitors[0].height
+        print(f"Actual resolution: {width}x{height}")
+        
+        # Check resolution and assign x and y
+        #4k
+        if (width, height) == (3840, 2160) or (width, height) == (2160, 3840):
+            x, y, width, height = 2815, 305, 260, 110
+        #2k
+        elif (width, height) == (2560, 1440) or (width, height) == (1440, 2560):
+            x, y, width, height = 1875, 200, 175, 75
+        #1k aka 1920x1080
+        elif (width, height) == (1920, 1080) or (width, height) == (1080, 1920):
+            x, y, width, height = 1400, 145, 145, 60
+        else:
+            x, y, width, height = 1400, 145, 145, 60
+        return x, y, width, height
+    else:
+        return 1400, 145, 145, 60
 
 class ImageProcessorApp:
     def __init__(self, root, map_window):
@@ -38,10 +67,17 @@ class ImageProcessorApp:
         self.screenshot_canvas = tk.Canvas(self.root, width=175, height=75, bg='black')
         self.screenshot_canvas.pack()
 
+        # Refresh on Tab
         self.auto_process_var = BooleanVar()
         self.auto_process_checkbox = Checkbutton(self.root, text="Refresh on Tab", variable=self.auto_process_var, fg='black')
         self.auto_process_checkbox.pack()
 
+        # Convert to B/W
+        self.convert_to_bw_var = BooleanVar()
+        self.convert_to_bw_checkbox = Checkbutton(self.root, text="Convert to B/W", variable=self.convert_to_bw_var, fg='black')
+        self.convert_to_bw_checkbox.pack()
+
+        # Cancel Auto Refresh on Escape
         self.cancel_auto_process_var = BooleanVar()
         self.cancel_auto_process_checkbox = Checkbutton(self.root, text="Cancel Auto Refresh on Escape", variable=self.cancel_auto_process_var, fg='black')
         self.cancel_auto_process_checkbox.pack()
@@ -70,6 +106,15 @@ class ImageProcessorApp:
         self.auto_processing_enabled = False
         self.previous_cropped_image_path = "cropped_map_with_marker.png"
 
+    def handle_escape(self, event=None):
+        if self.auto_process_var.get():
+            self.auto_process_var.set(False)
+            print("Auto process canceled")
+
+    def handle_tab(self, event=None):
+        if self.auto_process_var.get():
+            self.process_image()
+
     def click_window(self, event):
         self.offset_x = event.x_root - self.root.winfo_x()
         self.offset_y = event.y_root - self.root.winfo_y()
@@ -95,13 +140,19 @@ class ImageProcessorApp:
         canvas.create_image(0, 0, anchor=tk.NW, image=photo)
         canvas.image = photo
 
+    def convert_to_bw(self, image):
+        if self.convert_to_bw_var.get():
+            return image.convert("L")  # Converts to grayscale
+        return image
+
     def process_image(self):
         # Capture a region of the screen
-        x, y, width, height = 1406, 150, 175, 75
+        x, y, width, height = get_resolution()
+
         screenshot = pyautogui.screenshot(region=(x, y, width, height))
 
         # Convert the screenshot to grayscale (black and white)
-        grayscale_screenshot = screenshot.convert("L")
+        grayscale_screenshot = self.convert_to_bw(screenshot)
 
         # Save the grayscale screenshot
         grayscale_screenshot.save("screenshot.png")
@@ -126,12 +177,16 @@ class ImageProcessorApp:
         for line in cleaned_text.splitlines():
             result = re.match(r'-?\d+', line)
             if result:
-                coordinate = int(result.group())
+                coordinate_str = result.group()
                 # Ensure coordinate is within valid range
-                if -600 <= coordinate <= 600:
-                    coordinates.append(coordinate)
+                if -600 <= int(coordinate_str) <= 600:
+                    coordinates.append(int(coordinate_str))
                 else:
-                    print(f"Coordinate {coordinate} is out of range and will be ignored.")
+                    # Truncate to the first 3 digits
+                    truncated_coordinate_str = coordinate_str[:4]  # Get the sign and first 3 digits
+                    truncated_coordinate = int(truncated_coordinate_str)
+                    coordinates.append(truncated_coordinate)
+                    print(f"Coordinate {coordinate_str} is out of range; using truncated value {truncated_coordinate}.")
 
         if len(coordinates) == 2:
             latitude, longitude = coordinates
@@ -153,8 +208,18 @@ class ImageProcessorApp:
     def crop_and_mark_map(self, coordinates):
         latitude, longitude = coordinates
 
-        # Load the map image
-        map_image = Image.open("C:/Users/ramir/Documents/Images/TheIsle/Map.png").convert("RGBA")
+        # Define the relative path to the local image
+        local_image_path = os.path.join(os.path.dirname(__file__), 'Map.png')
+
+        if os.path.exists(local_image_path):
+            # Load the map image from the local file if it exists
+            map_image = Image.open(local_image_path).convert("RGBA")
+        else:
+            # If the file doesn't exist locally, download it from GitHub
+            image_url = "https://raw.githubusercontent.com/<your-username>/<your-repository>/main/Map.png"
+            response = requests.get(image_url)
+            image_data = BytesIO(response.content)
+            map_image = Image.open(image_data).convert("RGBA")
 
         # Calculate the center point of the crop area
         center_x = (longitude + 600) * map_image.width // 1200
@@ -183,29 +248,22 @@ class ImageProcessorApp:
         )
         draw.ellipse(center_dot, fill='red')
 
-        # Save the result
-        cropped_image.save("cropped_map_with_marker.png", "PNG")
+        # Save the cropped image with the marker
+        cropped_image_path = "cropped_map_with_marker.png"
+        cropped_image.save(cropped_image_path)
 
-        # Update the path to the new cropped image
-        self.previous_cropped_image_path = "cropped_map_with_marker.png"
+        # Display the cropped image in the map window
+        self.display_image(cropped_image_path, self.cropped_map_canvas, 200, 200)
 
-        # Display the cropped square map
-        self.display_image("cropped_map_with_marker.png", self.cropped_map_canvas, 200, 200)
+        self.previous_cropped_image_path = cropped_image_path
 
-    def handle_tab(self, event):
-        if self.auto_process_var.get():
-            self.process_image()
+    def run(self):
+        self.root.mainloop()
+        self.map_window.mainloop()
 
-    def handle_escape(self, event):
-        if self.cancel_auto_process_var.get():
-            self.auto_processing_enabled = False
-            self.auto_process_var.set(False)
-            print("Auto processing cancelled.")
-        else:
-            print("Escape key pressed, but auto process cancel checkbox is not checked.")
-
+# Usage
 if __name__ == "__main__":
     root = tk.Tk()
-    map_window = tk.Toplevel()
+    map_window = tk.Toplevel(root)
     app = ImageProcessorApp(root, map_window)
-    root.mainloop()
+    app.run()
