@@ -216,7 +216,7 @@ class ImageProcessorApp:
             map_image = Image.open(local_image_path).convert("RGBA")
         else:
             # If the file doesn't exist locally, download it from GitHub
-            image_url = "https://raw.githubusercontent.com/<your-username>/<your-repository>/main/Map.png"
+            image_url = "https://raw.githubusercontent.com/Ram-Rod6198/TheIsleMiniMap/main/Map.png"
             response = requests.get(image_url)
             image_data = BytesIO(response.content)
             map_image = Image.open(image_data).convert("RGBA")
